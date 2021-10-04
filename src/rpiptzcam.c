@@ -25,6 +25,17 @@ struct _RpiImagePipe {
 	GstElement *videosink;
 };
 
+typedef struct _CameraPTZ CameraPTZ;
+struct _CameraPTZ {
+	float zoom;
+	float x;
+	float y;
+	float rx;
+	float ry;
+	float h;
+	float w;
+};
+
 typedef struct _VideoMQTT VideoMQTT;
 struct _VideoMQTT {
 	struct mosquitto *tt;
@@ -38,6 +49,7 @@ struct _VideoMQTT {
 
 VideoMQTT mq;
 RpiImagePipe rpi;
+CameraPTZ ptz;
 GMainLoop *loop;
 gint iso=100;
 
@@ -200,6 +212,56 @@ static void mqtt_log_callback(struct mosquitto *m, void *userdata, int level, co
 fprintf(stderr, "[MQTT-%d] %s\n", level, str);
 }
 
+void set_zoom(int zoom)
+{
+  float s=(float)zoom/100.0;
+  float hw=1,xy=0;
+  float px,py=0;
+
+  if (zoom<0)
+   return;
+
+  if (zoom>99) {
+   hw=1.0/s;
+   xy=0.5-(0.5/s);
+
+   fprintf(stderr, "%d S: %f XY: %f HW: %f\n", zoom, s, xy, hw);
+  } else {
+   s=(float)zoom;
+  }
+
+  if (zoom>1) {
+   char txt[80];
+   snprintf(txt, sizeof(txt), "Zoom: %f.1", s);
+   g_object_set(rpi.src, "annotation-mode", 1, "annotation-text", txt, NULL);
+  } else {
+   g_object_set(rpi.src, "annotation-mode", 12, "annotation-text", "", NULL);
+  }
+
+  ptz.zoom=s;
+  ptz.rx=xy;
+  ptz.ry=xy;
+  ptz.h=hw;
+  ptz.w=hw;
+
+  switch(zoom) {
+  case 0:
+  case 1:
+    g_object_set(rpi.src, "roi-x", 0.0, NULL);
+    g_object_set(rpi.src, "roi-y", 0.0, NULL);
+    g_object_set(rpi.src, "roi-w", 1.0, NULL);
+    g_object_set(rpi.src, "roi-h", 1.0, NULL);
+  break;
+  default:
+    g_object_set(rpi.src, "roi-x", xy+ptz.x, NULL);
+    g_object_set(rpi.src, "roi-y", xy+ptz.y, NULL);
+    g_object_set(rpi.src, "roi-w", hw, NULL);
+    g_object_set(rpi.src, "roi-h", hw, NULL);
+  break;
+  }
+
+}
+
 void on_message(struct mosquitto *m, void *userdata, const struct mosquitto_message *msg)
 {
 char data[256];
@@ -213,70 +275,47 @@ if (msg->payloadlen>250)
 memcpy(data, msg->payload, msg->payloadlen);
 data[msg->payloadlen]=NULL;
 
-if (strstr(msg->topic, "drc")!=NULL) {
+if (strstr(msg->topic, "/drc")!=NULL) {
   int tmp=atoi(data);
   g_object_set(rpi.src, "drc", tmp, NULL);
-} else if (strstr(msg->topic, "exposure-mode")!=NULL) {
+} else if (strstr(msg->topic, "/exposure-mode")!=NULL) {
   int tmp=atoi(data);
   g_object_set(rpi.src, "exposure-mode", tmp, NULL);
-} else if (strstr(msg->topic, "annotation-mode")!=NULL) {
+} else if (strstr(msg->topic, "/annotation-mode")!=NULL) {
   int tmp=atoi(data);
   g_object_set(rpi.src, "annotation-mode", tmp, NULL);
-} else if (strstr(msg->topic, "annotation-text")!=NULL) {
+} else if (strstr(msg->topic, "/annotation-text")!=NULL) {
   g_object_set(rpi.src, "annotation-text", data, NULL);
-} else if (strstr(msg->topic, "iso")!=NULL) {
+} else if (strstr(msg->topic, "/iso")!=NULL) {
   int tmp=atoi(data);
   g_object_set(rpi.src, "iso", tmp, NULL);
-} else if (strstr(msg->topic, "zoom")!=NULL) {
+} else if (strstr(msg->topic, "/xy")!=NULL) {
+  int x,y, r;
+
+  r=sscanf(data, "%d,%d", &x, &y);
+  if (r==2) {
+   float px,py;
+
+   ptz.x=CLAMP((float)x/100.0, -1.0, 1.0);
+   ptz.y=CLAMP((float)y/100.0, -1.0, 1.0);
+
+   fprintf(stderr, "PAN %f %f\n", ptz.x, ptz.y);
+
+   px=CLAMP((ptz.rx+ptz.x), 0, 1);
+   py=CLAMP((ptz.ry+ptz.y), 0, 1);
+
+   fprintf(stderr, "PAN %f %f\n", px, py);
+
+   g_object_set(rpi.src, "roi-x", px, NULL);
+   g_object_set(rpi.src, "roi-y", py, NULL);
+  } else {
+   g_print("Invalid xy format\n");
+  }
+} else if (strstr(msg->topic, "/zoom")!=NULL) {
   int tmp=atoi(data);
-  float s=(float)tmp/100.0;
-  float hw=1,xy=0;
-  float px,py=0;
-
-  if (tmp>99) {
-   hw=1.0/s;
-   xy=0.5-(0.5/s);
-
-   fprintf(stderr, "%d S: %f XY: %f HW: %f\n", tmp, s, xy, hw);
-  } else {
-   s=(float)tmp;
-  }
-
-  if (tmp>1) {
-   char txt[80];
-   snprintf(txt, sizeof(txt), "Zoom: %f.1", s);
-   g_object_set(rpi.src, "annotation-mode", 1, "annotation-text", txt, NULL);
-  } else {
-   g_object_set(rpi.src, "annotation-mode", 12, "annotation-text", "", NULL);
-  }
-
-  switch(tmp) {
-  case 0:
-  case 1:
-    g_object_set(rpi.src, "roi-x", 0, NULL);
-    g_object_set(rpi.src, "roi-y", 0, NULL);
-    g_object_set(rpi.src, "roi-w", 1, NULL);
-    g_object_set(rpi.src, "roi-h", 1, NULL);
-  break;
-  case 2:
-    g_object_set(rpi.src, "roi-x", 0.25, NULL);
-    g_object_set(rpi.src, "roi-y", 0.25, NULL);
-    g_object_set(rpi.src, "roi-w", 0.5, NULL);
-    g_object_set(rpi.src, "roi-h", 0.5, NULL);
-  break;
-  case 3:
-    g_object_set(rpi.src, "roi-x", 0.37, NULL);
-    g_object_set(rpi.src, "roi-y", 0.37, NULL);
-    g_object_set(rpi.src, "roi-w", 0.25, NULL);
-    g_object_set(rpi.src, "roi-h", 0.25, NULL);
-  break;
-  default:
-    g_object_set(rpi.src, "roi-x", xy, NULL);
-    g_object_set(rpi.src, "roi-y", xy, NULL);
-    g_object_set(rpi.src, "roi-w", hw, NULL);
-    g_object_set(rpi.src, "roi-h", hw, NULL);
-  break;
-  }
+  set_zoom(tmp);
+} else {
+   g_print("Unhandled topic\n");
 }
 }
 
@@ -342,6 +381,15 @@ mosquitto_subscribe(mq.tt, NULL, "/video/annotation-mode", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/annotation-text", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
+
+ptz.zoom=1.0;
+ptz.x=0.0;
+ptz.y=0.0;
+ptz.rx=0.0;
+ptz.ry=0.0;
+ptz.h=1.0;
+ptz.w=1.0;
 
 rpiimagepipe();
 
