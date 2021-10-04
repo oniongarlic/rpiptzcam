@@ -76,7 +76,7 @@ return TRUE;
 // jpegparse ! matroskamux ! queue ! tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
 
 static void
-rpiimagepipe()
+rpiimagepipe(bool h264)
 {
 rpi.pipe=gst_pipeline_new("pipeline");
 
@@ -87,14 +87,24 @@ rpi.queue=gst_element_factory_make("queue", "queue");
 // Filtering/Caps
 rpi.capsfilter=gst_element_factory_make("capsfilter", "capsfilter");
 
-// Framerate, 1 FPS
-// GstCaps *cr=gst_caps_from_string ("image/jpeg,width=2592,height=1944,framerate=5/1");
-GstCaps *cr=gst_caps_from_string ("image/jpeg,width=1640,height=1232,framerate=5/1");
-g_object_set(rpi.capsfilter, "caps", cr, NULL);
-gst_caps_unref(cr);
-
 // Encoding
-rpi.imageenc=gst_element_factory_make("jpegparse", "jpeg");
+if (h264) {
+	GstCaps *cr=gst_caps_from_string ("video/x-h264,width=1640,height=1232,framerate=5/1");
+	g_object_set(rpi.capsfilter, "caps", cr, NULL);
+	gst_caps_unref(cr);
+
+	rpi.imageenc=gst_element_factory_make("h264parse", "h264");
+	g_object_set(rpi.imageenc, "config-interval", 1, NULL);
+} else {
+	// Framerate, 1 FPS
+	// GstCaps *cr=gst_caps_from_string ("image/jpeg,width=2592,height=1944,framerate=5/1");
+	GstCaps *cr=gst_caps_from_string ("image/jpeg,width=1640,height=1232,framerate=5/1");
+	g_object_set(rpi.capsfilter, "caps", cr, NULL);
+	gst_caps_unref(cr);
+
+	rpi.imageenc=gst_element_factory_make("jpegparse", "jpeg");
+}
+
 rpi.metadata=gst_element_factory_make("matroskamux", "mux");
 
 rpi.progress=gst_element_factory_make("progressreport", "progress");
@@ -296,13 +306,15 @@ if (strstr(msg->topic, "/drc")!=NULL) {
   if (r==2) {
    float px,py;
 
+   float p=1.0-ptz.h;
+
    ptz.x=CLAMP((float)x/100.0, -1.0, 1.0);
    ptz.y=CLAMP((float)y/100.0, -1.0, 1.0);
 
    fprintf(stderr, "PAN %f %f\n", ptz.x, ptz.y);
 
-   px=CLAMP((ptz.rx+ptz.x), 0, 1);
-   py=CLAMP((ptz.ry+ptz.y), 0, 1);
+   px=CLAMP((ptz.rx+ptz.x*p), 0, 1);
+   py=CLAMP((ptz.ry+ptz.y*p), 0, 1);
 
    fprintf(stderr, "PAN %f %f\n", px, py);
 
@@ -391,7 +403,7 @@ ptz.ry=0.0;
 ptz.h=1.0;
 ptz.w=1.0;
 
-rpiimagepipe();
+rpiimagepipe(true);
 
 bus = gst_pipeline_get_bus(GST_PIPELINE(rpi.pipe));
 bus_watch_id = gst_bus_add_watch(bus, bus_call, loop);
