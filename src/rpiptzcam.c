@@ -298,7 +298,20 @@ if (strstr(msg->topic, "/drc")!=NULL) {
   g_object_set(rpi.src, "annotation-text", data, NULL);
 } else if (strstr(msg->topic, "/iso")!=NULL) {
   int tmp=atoi(data);
+  tmp=CLAMP(tmp, 100, 3600);
   g_object_set(rpi.src, "iso", tmp, NULL);
+} else if (strstr(msg->topic, "/brightness")!=NULL) {
+  int tmp=atoi(data);
+  tmp=CLAMP(tmp, -100, 100);
+  g_object_set(rpi.src, "brightness", tmp, NULL);
+} else if (strstr(msg->topic, "/contrast")!=NULL) {
+  int tmp=atoi(data);
+  tmp=CLAMP(tmp, -100, 100);
+  g_object_set(rpi.src, "contrast", tmp, NULL);
+} else if (strstr(msg->topic, "/saturation")!=NULL) {
+  int tmp=atoi(data);
+  tmp=CLAMP(tmp, -100, 100);
+  g_object_set(rpi.src, "saturation", tmp, NULL);
 } else if (strstr(msg->topic, "/xy")!=NULL) {
   int x,y, r;
 
@@ -387,6 +400,9 @@ mq.clientid="ta-rpivideo";
 connect_mqtt();
 
 mosquitto_subscribe(mq.tt, NULL, "/video/iso", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/saturation", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/contrast", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/brightness", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/drc", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/exposure-mode", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/annotation-mode", 0);
