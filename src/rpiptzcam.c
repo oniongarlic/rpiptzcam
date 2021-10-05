@@ -224,37 +224,37 @@ fprintf(stderr, "[MQTT-%d] %s\n", level, str);
 
 void set_zoom(int zoom)
 {
-  float s=(float)zoom/100.0;
-  float hw=1,xy=0;
-  float px,py=0;
+float s=(float)zoom/100.0;
+float hw=1,xy=0;
+float px,py=0;
 
-  if (zoom<0)
-   return;
+if (zoom<0)
+  return;
 
-  if (zoom>99) {
-   hw=1.0/s;
-   xy=0.5-(0.5/s);
+if (zoom>99) {
+  hw=1.0/s;
+  xy=0.5-(0.5/s);
 
-   fprintf(stderr, "%d S: %f XY: %f HW: %f\n", zoom, s, xy, hw);
-  } else {
-   s=(float)zoom;
-  }
+  fprintf(stderr, "%d S: %f XY: %f HW: %f\n", zoom, s, xy, hw);
+} else {
+  s=(float)zoom;
+}
 
-  if (zoom>1) {
-   char txt[80];
-   snprintf(txt, sizeof(txt), "Zoom: %f.1", s);
-   g_object_set(rpi.src, "annotation-mode", 1, "annotation-text", txt, NULL);
-  } else {
-   g_object_set(rpi.src, "annotation-mode", 12, "annotation-text", "", NULL);
-  }
+if (zoom>1) {
+  char txt[80];
+  snprintf(txt, sizeof(txt), "Zoom: %f.1", s);
+  g_object_set(rpi.src, "annotation-mode", 1, "annotation-text", txt, NULL);
+} else {
+  g_object_set(rpi.src, "annotation-mode", 12, "annotation-text", "", NULL);
+}
 
-  ptz.zoom=s;
-  ptz.rx=xy;
-  ptz.ry=xy;
-  ptz.h=hw;
-  ptz.w=hw;
+ptz.zoom=s;
+ptz.rx=xy;
+ptz.ry=xy;
+ptz.h=hw;
+ptz.w=hw;
 
-  switch(zoom) {
+switch(zoom) {
   case 0:
   case 1:
     g_object_set(rpi.src, "roi-x", 0.0, NULL);
@@ -268,8 +268,27 @@ void set_zoom(int zoom)
     g_object_set(rpi.src, "roi-w", hw, NULL);
     g_object_set(rpi.src, "roi-h", hw, NULL);
   break;
-  }
+}
 
+}
+
+void set_panning(int x, int y)
+{
+float px,py;
+float p=1.0-ptz.h;
+
+ptz.x=CLAMP((float)x/100.0, -1.0, 1.0);
+ptz.y=CLAMP((float)y/100.0, -1.0, 1.0);
+
+fprintf(stderr, "PAN %f %f\n", ptz.x, ptz.y);
+
+px=CLAMP((ptz.rx+ptz.x*p), 0, ptz.w);
+py=CLAMP((ptz.ry+ptz.y*p), 0, ptz.h);
+
+fprintf(stderr, "PAN %f %f\n", px, py);
+
+g_object_set(rpi.src, "roi-x", px, NULL);
+g_object_set(rpi.src, "roi-y", py, NULL);
 }
 
 void on_message(struct mosquitto *m, void *userdata, const struct mosquitto_message *msg)
@@ -321,22 +340,7 @@ if (strstr(msg->topic, "/drc")!=NULL) {
 
   r=sscanf(data, "%d,%d", &x, &y);
   if (r==2) {
-   float px,py;
-
-   float p=1.0-ptz.h;
-
-   ptz.x=CLAMP((float)x/100.0, -1.0, 1.0);
-   ptz.y=CLAMP((float)y/100.0, -1.0, 1.0);
-
-   fprintf(stderr, "PAN %f %f\n", ptz.x, ptz.y);
-
-   px=CLAMP((ptz.rx+ptz.x*p), 0, 1);
-   py=CLAMP((ptz.ry+ptz.y*p), 0, 1);
-
-   fprintf(stderr, "PAN %f %f\n", px, py);
-
-   g_object_set(rpi.src, "roi-x", px, NULL);
-   g_object_set(rpi.src, "roi-y", py, NULL);
+   set_panning(x,y);
   } else {
    g_print("Invalid xy format\n");
   }
