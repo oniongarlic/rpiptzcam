@@ -312,6 +312,10 @@ if (strstr(msg->topic, "/drc")!=NULL) {
   int tmp=atoi(data);
   tmp=CLAMP(tmp, -100, 100);
   g_object_set(rpi.src, "saturation", tmp, NULL);
+} else if (strstr(msg->topic, "/sharpness")!=NULL) {
+  int tmp=atoi(data);
+  tmp=CLAMP(tmp, -100, 100);
+  g_object_set(rpi.src, "sharpness", tmp, NULL);
 } else if (strstr(msg->topic, "/xy")!=NULL) {
   int x,y, r;
 
@@ -403,6 +407,7 @@ mosquitto_subscribe(mq.tt, NULL, "/video/iso", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/saturation", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/contrast", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/brightness", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/sharpness", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/drc", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/exposure-mode", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/annotation-mode", 0);
