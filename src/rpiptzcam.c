@@ -22,6 +22,7 @@ struct _RpiImagePipe {
 	GstElement *tee_queue_2;
 	GstElement *filesink;
 	GstElement *progress;
+	GstElement *rtp_pay;
 	GstElement *videosink;
 };
 
@@ -118,8 +119,16 @@ rpi.tee_queue_2=gst_element_factory_make("queue", "queue2");
 rpi.filesink=gst_element_factory_make("filesink", "filesink");
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
 //rpi.videosink=gst_element_factory_make("tcpserversink", "tcpsink");
+//rtph264pay pt=96 config-interval=1 ! udpsink host=192.168.1.149 port=5000
+//rpi.videosink=gst_element_factory_make("fakesink", "tcpsink");
 
-rpi.videosink=gst_element_factory_make("fakesink", "tcpsink");
+g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
+
+rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
+g_object_set(rpi.videosink, "host", "192.168.1.149", "port", 5000, NULL);
+
+rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
+g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
 
 gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.capsfilter,
@@ -128,18 +137,19 @@ gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.tee_queue_2,
 	rpi.filesink,
 	rpi.progress,
+	rpi.rtp_pay,
 	rpi.videosink, NULL);
 
 gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.tee, NULL);
 gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.imageenc, rpi.metadata, rpi.filesink, NULL);
-gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.videosink, NULL);
+gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
 
 // Setup
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
 // annotation-mode=12 sensor-mode=2 exposure-mode=2 drc=3
-g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "sensor-mode", 0, "exposure-mode", 2, "keyframe-interval", 5, NULL);
+g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, NULL);
 g_object_set(rpi.filesink, "location", "video.mkv", NULL);
-g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
+//g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
 }
 
 static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data)
