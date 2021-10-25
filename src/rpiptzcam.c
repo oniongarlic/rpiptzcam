@@ -46,6 +46,9 @@ struct _VideoMQTT {
 	const char *ca;
 	const char *crt;
 	const char *key;
+
+	GSource *src_in;
+	GSource *src_out;
 };
 
 VideoMQTT mq;
@@ -226,7 +229,6 @@ if (r!=MOSQ_ERR_SUCCESS)
 return r;
 }
 
-
 static void mqtt_log_callback(struct mosquitto *m, void *userdata, int level, const char *str)
 {
 fprintf(stderr, "[MQTT-%d] %s\n", level, str);
@@ -399,6 +401,48 @@ switch (r) {
 return TRUE;
 }
 
+static gboolean _mqtt_socket_out(gint fd, GIOCondition condition, gpointer user_data)
+{
+mosquitto_loop_write(mq.tt, 1);
+
+g_source_destroy(mq.src_out);
+// g_source_unref(mq.src_out);
+
+return FALSE;
+}
+
+static gboolean _mqtt_socket_in(gint fd, GIOCondition condition, gpointer user_data)
+{
+int r=mosquitto_loop_read(mq.tt, 1);
+
+if (r == MOSQ_ERR_CONN_LOST) {
+	mosquitto_reconnect(mq.tt);
+}
+
+if (mosquitto_want_write(mq.tt)) {
+	int fd=mosquitto_socket(mq.tt);
+
+	mq.src_out=g_unix_fd_source_new(fd, G_IO_OUT);
+	g_source_set_callback(mq.src_out, (GSourceFunc)_mqtt_socket_out, loop, NULL);
+	g_source_attach(mq.src_out, NULL);
+}
+
+return TRUE;
+}
+
+static gboolean _mqtt_socket_misc(gpointer user_data)
+{
+mosquitto_loop_misc(mq.tt);
+
+#if 0
+if (mosquitto_want_write(mq.tt)) {
+	mosquitto_loop_write(mq.tt, 1);
+}
+#endif
+
+return TRUE;
+}
+
 gint main(gint argc, gchar **argv)
 {
 GstBus *bus;
@@ -406,14 +450,14 @@ int bus_watch_id;
 
 gst_init(&argc, &argv);
 
+mq.host="localhost";
+mq.clientid="ta-rpivideo";
+
 mosquitto_lib_init();
 
 mq.tt=mosquitto_new(mq.clientid, clean_session, NULL);
 mosquitto_log_callback_set(mq.tt, mqtt_log_callback);
 mosquitto_message_callback_set(mq.tt, on_message);
-
-mq.host="localhost";
-mq.clientid="ta-rpivideo";
 
 connect_mqtt();
 
@@ -453,11 +497,24 @@ mqtt_publish_info_topic_int(mq.tt, "video", "streaming", 0);
 gst_element_set_state(rpi.pipe, GST_STATE_PLAYING);
 
 loop=g_main_loop_new(NULL, TRUE);
-// XXX
-g_timeout_add(100, mqtt_loop_sleep, loop);
+
+int fd=mosquitto_socket(mq.tt);
+
+mq.src_in=g_unix_fd_source_new(fd, G_IO_IN);
+g_source_set_callback(mq.src_in, (GSourceFunc)_mqtt_socket_in, loop, NULL);
+g_source_attach(mq.src_in, NULL);
+
+//mq.src_out=g_unix_fd_source_new(fd, G_IO_OUT);
+//g_source_set_callback(mq.src_out, (GSourceFunc)_mqtt_socket_out, loop, NULL);
+//g_source_attach(mq.src_out, NULL);
+
+g_timeout_add(100, _mqtt_socket_misc, loop);
 
 g_main_loop_run(loop);
+
 g_main_loop_unref(loop);
+
+g_source_destroy(mq.src_in);
 
 gst_object_unref(bus);
 gst_element_set_state(rpi.pipe, GST_STATE_NULL);
