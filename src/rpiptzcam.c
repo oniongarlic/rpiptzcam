@@ -60,6 +60,9 @@ CameraPTZ ptz;
 GMainLoop *loop;
 gint iso=100;
 
+gboolean record=false;
+gboolean stream=false;
+
 int keepalive = 120;
 bool clean_session = true;
 
@@ -121,7 +124,12 @@ rpi.tee_queue_1=gst_element_factory_make("queue", "queue1");
 rpi.tee_queue_2=gst_element_factory_make("queue", "queue2");
 
 // Sink(s)
-rpi.filesink=gst_element_factory_make("filesink", "filesink");
+if (record) {
+	rpi.filesink=gst_element_factory_make("filesink", "filesink");
+	g_object_set(rpi.filesink, "location", "video.mkv", NULL);
+} else {
+	rpi.filesink=gst_element_factory_make("fakesink", "filesink");
+}
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
 //rpi.videosink=gst_element_factory_make("tcpserversink", "tcpsink");
 //rtph264pay pt=96 config-interval=1 ! udpsink host=192.168.1.149 port=5000
@@ -129,11 +137,15 @@ rpi.filesink=gst_element_factory_make("filesink", "filesink");
 
 g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
 
-rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
-g_object_set(rpi.videosink, "host", "192.168.1.149", "port", 5000, NULL);
-
 rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
 g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
+
+if (stream) {
+	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
+	g_object_set(rpi.videosink, "host", "192.168.1.149", "port", 5000, NULL);
+} else {
+	rpi.videosink=gst_element_factory_make("fakesink", "streamsink");
+}
 
 gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.capsfilter,
@@ -153,7 +165,6 @@ gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
 // annotation-mode=12 sensor-mode=2 exposure-mode=2 drc=3
 g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, NULL);
-g_object_set(rpi.filesink, "location", "video.mkv", NULL);
 //g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
 }
 
@@ -450,6 +461,8 @@ static GOptionEntry entries[] =
   { "mqtthost", 'q', 0, G_OPTION_ARG_STRING, &mq.host, "MQTT Host", "host" },
   { "mqttclient", 'c', 0, G_OPTION_ARG_STRING, &mq.clientid, "MQTT Client ID", "client" },
   { "mqttport", 'p', 0, G_OPTION_ARG_INT, &mq.port, "MQTT port", "port" },
+  { "record", 0, 0, G_OPTION_ARG_NONE, &record, "Record localy", NULL },
+  { "stream", 0, 0, G_OPTION_ARG_NONE, &stream, "Stream", NULL },
   { NULL }
 };
 
