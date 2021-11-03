@@ -40,12 +40,15 @@ struct _CameraPTZ {
 typedef struct _VideoMQTT VideoMQTT;
 struct _VideoMQTT {
 	struct mosquitto *tt;
-	const char *host;
-	const char *clientid;
-	const char *topic_prefix;
-	const char *ca;
-	const char *crt;
-	const char *key;
+	gchar *host;
+	int port;
+	gchar *clientid;
+
+	gchar *topic_prefix;
+
+	gchar *ca;
+	gchar *crt;
+	gchar *key;
 
 	GSource *src_in;
 	GSource *src_out;
@@ -57,7 +60,6 @@ CameraPTZ ptz;
 GMainLoop *loop;
 gint iso=100;
 
-int port = 1883;
 int keepalive = 120;
 bool clean_session = true;
 
@@ -367,7 +369,7 @@ if (strstr(msg->topic, "/drc")!=NULL) {
 gint connect_mqtt()
 {
 int ct=0,cttr=10;
-while (mosquitto_connect(mq.tt, mq.host, port, keepalive)) {
+while (mosquitto_connect(mq.tt, mq.host, mq.port, keepalive)) {
 	fprintf(stderr, "Unable to connect, retrying in 10 seconds.\n");
 	ct++;
 	if (ct>cttr) {
@@ -443,15 +445,37 @@ if (mosquitto_want_write(mq.tt)) {
 return TRUE;
 }
 
+static GOptionEntry entries[] =
+{
+  { "mqtthost", 'q', 0, G_OPTION_ARG_STRING, &mq.host, "MQTT Host", "host" },
+  { "mqttclient", 'c', 0, G_OPTION_ARG_STRING, &mq.clientid, "MQTT Client ID", "client" },
+  { "mqttport", 'p', 0, G_OPTION_ARG_INT, &mq.port, "MQTT port", "port" },
+  { NULL }
+};
+
 gint main(gint argc, gchar **argv)
 {
 GstBus *bus;
 int bus_watch_id;
+GError *error = NULL;
+GOptionContext *context;
+
+mq.host="localhost";
+mq.port=1883;
+mq.clientid="ta-rpivideo";
 
 gst_init(&argc, &argv);
 
-mq.host="localhost";
-mq.clientid="ta-rpivideo";
+context = g_option_context_new ("- test tree model performance");
+g_option_context_add_main_entries (context, entries, NULL);
+//g_option_context_add_group (context, gtk_get_option_group (TRUE));
+
+if (!g_option_context_parse (context, &argc, &argv, &error)) {
+	g_print ("option parsing failed: %s\n", error->message);
+	exit (1);
+}
+
+g_print("MQTT: %s %d %s\n", mq.host, mq.port, mq.clientid);
 
 mosquitto_lib_init();
 
