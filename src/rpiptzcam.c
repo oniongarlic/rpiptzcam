@@ -16,6 +16,7 @@ struct _RpiImagePipe {
 	GstElement *queue;
 	GstElement *capsfilter;
 	GstElement *imageenc;
+	GstElement *parser;
 	GstElement *metadata;
 	GstElement *tee;
 	GstElement *tee_queue_1;
@@ -102,8 +103,8 @@ if (h264) {
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
 
-	rpi.imageenc=gst_element_factory_make("h264parse", "h264");
-	g_object_set(rpi.imageenc, "config-interval", 1, NULL);
+	rpi.parser=gst_element_factory_make("h264parse", "h264");
+	g_object_set(rpi.parser, "config-interval", 1, NULL);
 } else {
 	// Framerate, 1 FPS
 	// GstCaps *cr=gst_caps_from_string ("image/jpeg,width=2592,height=1944,framerate=5/1");
@@ -111,7 +112,7 @@ if (h264) {
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
 
-	rpi.imageenc=gst_element_factory_make("jpegparse", "jpeg");
+	rpi.parser=gst_element_factory_make("jpegparse", "jpeg");
 }
 
 rpi.metadata=gst_element_factory_make("matroskamux", "mux");
@@ -149,7 +150,7 @@ if (stream) {
 
 gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.capsfilter,
-	rpi.tee, rpi.imageenc, rpi.metadata,
+	rpi.tee, rpi.parser, rpi.metadata,
 	rpi.tee_queue_1,
 	rpi.tee_queue_2,
 	rpi.filesink,
@@ -157,14 +158,16 @@ gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.rtp_pay,
 	rpi.videosink, NULL);
 
-gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.tee, NULL);
-gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.imageenc, rpi.metadata, rpi.filesink, NULL);
+gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.parser, rpi.tee, NULL);
+
+gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
+
 gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
 
 // Setup
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
 // annotation-mode=12 sensor-mode=2 exposure-mode=2 drc=3
-g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, NULL);
+g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, "bitrate", 4000000, NULL);
 //g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
 }
 
