@@ -25,6 +25,12 @@ struct _RpiImagePipe {
 	GstElement *progress;
 	GstElement *rtp_pay;
 	GstElement *videosink;
+
+	gint width;
+	gint height;
+	gint fps;
+
+	guint bitrate;
 };
 
 typedef struct _CameraPTZ CameraPTZ;
@@ -88,6 +94,7 @@ return TRUE;
 static void
 rpiimagepipe(bool h264)
 {
+char caps[80];
 rpi.pipe=gst_pipeline_new("pipeline");
 
 // Source
@@ -99,7 +106,9 @@ rpi.capsfilter=gst_element_factory_make("capsfilter", "capsfilter");
 
 // Encoding
 if (h264) {
-	GstCaps *cr=gst_caps_from_string ("video/x-h264,width=1640,height=1232,framerate=5/1");
+	snprintf(caps, sizeof(caps), "video/x-h264,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
+
+	GstCaps *cr=gst_caps_from_string(caps);
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
 
@@ -108,7 +117,10 @@ if (h264) {
 } else {
 	// Framerate, 1 FPS
 	// GstCaps *cr=gst_caps_from_string ("image/jpeg,width=2592,height=1944,framerate=5/1");
-	GstCaps *cr=gst_caps_from_string ("image/jpeg,width=1640,height=1232,framerate=5/1");
+
+	snprintf(caps, sizeof(caps), "image/jpeg,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
+
+	GstCaps *cr=gst_caps_from_string(caps);
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
 
@@ -167,7 +179,7 @@ gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL
 // Setup
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
 // annotation-mode=12 sensor-mode=2 exposure-mode=2 drc=3
-g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, "bitrate", 4000000, NULL);
+g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, "bitrate", rpi.bitrate, NULL);
 //g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
 }
 
@@ -464,6 +476,13 @@ static GOptionEntry entries[] =
   { "mqtthost", 'q', 0, G_OPTION_ARG_STRING, &mq.host, "MQTT Host", "host" },
   { "mqttclient", 'c', 0, G_OPTION_ARG_STRING, &mq.clientid, "MQTT Client ID", "client" },
   { "mqttport", 'p', 0, G_OPTION_ARG_INT, &mq.port, "MQTT port", "port" },
+
+  { "width", 'w', 0, G_OPTION_ARG_INT, &rpi.width, "Video width", "width" },
+  { "height", 'h', 0, G_OPTION_ARG_INT, &rpi.height, "Video height", "height" },
+  { "fps", 'f', 0, G_OPTION_ARG_INT, &rpi.fps, "Video FPS", "fps" },
+
+  { "bitrate", 'b', 0, G_OPTION_ARG_INT, &rpi.bitrate, "Video bitrate", "bitrate" },
+
   { "record", 0, 0, G_OPTION_ARG_NONE, &record, "Record localy", NULL },
   { "stream", 0, 0, G_OPTION_ARG_NONE, &stream, "Stream", NULL },
   { NULL }
@@ -513,6 +532,11 @@ mosquitto_subscribe(mq.tt, NULL, "/video/annotation-text", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
+
+rpi.width=1920;
+rpi.height=1080;
+rpi.fps=25;
+rpi.bitrate=8000000;
 
 ptz.zoom=1.0;
 ptz.x=0.0;
