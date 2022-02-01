@@ -240,8 +240,12 @@ switch (GST_MESSAGE_TYPE (msg)) {
 		mqtt_publish_info_topic_int(mq.tt, "video", "streaming", 0);
 		g_main_loop_quit(loop);
 	break;
-	case GST_MESSAGE_BUFFERING:
-		g_print ("Buffering\n");
+	case GST_MESSAGE_BUFFERING: {
+		int buffering;
+
+		gst_message_parse_buffering(msg, &buffering);
+		g_print ("Buffering: %d\n", buffering);
+	}
 	break;
 	case GST_MESSAGE_STATE_CHANGED:
 		g_print ("State\n");
