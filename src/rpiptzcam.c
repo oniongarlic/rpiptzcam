@@ -499,6 +499,19 @@ mq.host="localhost";
 mq.port=1883;
 mq.clientid="ta-rpivideo";
 
+rpi.width=1920;
+rpi.height=1080;
+rpi.fps=25;
+rpi.bitrate=8000000;
+
+ptz.zoom=1.0;
+ptz.x=0.0;
+ptz.y=0.0;
+ptz.rx=0.0;
+ptz.ry=0.0;
+ptz.h=1.0;
+ptz.w=1.0;
+
 gst_init(&argc, &argv);
 
 context = g_option_context_new ("- test tree model performance");
@@ -532,19 +545,6 @@ mosquitto_subscribe(mq.tt, NULL, "/video/annotation-text", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
-
-rpi.width=1920;
-rpi.height=1080;
-rpi.fps=25;
-rpi.bitrate=8000000;
-
-ptz.zoom=1.0;
-ptz.x=0.0;
-ptz.y=0.0;
-ptz.rx=0.0;
-ptz.ry=0.0;
-ptz.h=1.0;
-ptz.w=1.0;
 
 rpiimagepipe(true);
 
