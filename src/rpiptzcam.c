@@ -20,17 +20,28 @@ struct _RpiImagePipe {
 	GstElement *metadata;
 	GstElement *tee;
 	GstElement *tee_queue_1;
-	GstElement *tee_queue_2;
 	GstElement *filesink;
+
 	GstElement *progress;
 	GstElement *rtp_pay;
+
+	GstElement *tee_queue_2;
 	GstElement *videosink;
+
+	GstElement *tee_queue_3;
+	GstElement *hlssink;
+
+	GstElement *tee_queue_4;
+	GstElement *rtmpsink;
 
 	gint width;
 	gint height;
 	gint fps;
 
 	guint bitrate;
+
+	gchar *udphost;
+	guint udpport;
 };
 
 typedef struct _CameraPTZ CameraPTZ;
@@ -69,6 +80,8 @@ gint iso=100;
 
 gboolean record=false;
 gboolean stream=false;
+gboolean hls=false;
+gboolean rtmp=false;
 
 int keepalive = 120;
 bool clean_session = true;
@@ -135,13 +148,15 @@ rpi.progress=gst_element_factory_make("progressreport", "progress");
 rpi.tee=gst_element_factory_make("tee", "tee");
 rpi.tee_queue_1=gst_element_factory_make("queue", "queue1");
 rpi.tee_queue_2=gst_element_factory_make("queue", "queue2");
+rpi.tee_queue_3=gst_element_factory_make("queue", "queue3");
+rpi.tee_queue_4=gst_element_factory_make("queue", "queue4");
 
-// Sink(s)
+// Record to local file
 if (record) {
 	rpi.filesink=gst_element_factory_make("filesink", "filesink");
 	g_object_set(rpi.filesink, "location", "video.mkv", NULL);
 } else {
-	rpi.filesink=gst_element_factory_make("fakesink", "filesink");
+	rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
 }
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
 //rpi.videosink=gst_element_factory_make("tcpserversink", "tcpsink");
@@ -149,15 +164,32 @@ if (record) {
 //rpi.videosink=gst_element_factory_make("fakesink", "tcpsink");
 
 g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
+g_object_set(rpi.tee_queue_3, "leaky", 2, NULL);
 
 rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
 g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
 
+// UDPsink to host
 if (stream) {
 	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
-	g_object_set(rpi.videosink, "host", "192.168.1.149", "port", 5000, NULL);
+	g_object_set(rpi.videosink, "host", rpi.udphost, "port", rpi.udpport, NULL);
 } else {
-	rpi.videosink=gst_element_factory_make("fakesink", "streamsink");
+	rpi.videosink=gst_element_factory_make("fakesink", "faksestreamsink");
+}
+
+// HLS
+if (hls) {
+	rpi.hlssink=gst_element_factory_make("hlssink", "hlsink");
+	g_object_set(rpi.hlssink, "location", "/var/spool/video", "max-files", 20, "target-duration", 60, NULL);
+} else {
+	rpi.hlssink=gst_element_factory_make("fakesink", "fakehlssink");
+}
+
+if (rtmp) {
+	rpi.rtmpsink=gst_element_factory_make("rtmpssink", "rtmpsink");
+	g_object_set(rpi.hlssink, "location", "rtmp://192.168.1.121/video", NULL);
+} else {
+	rpi.rtmpsink=gst_element_factory_make("fakesink", "fakertmpsink");
 }
 
 gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
@@ -168,13 +200,30 @@ gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.filesink,
 	rpi.progress,
 	rpi.rtp_pay,
-	rpi.videosink, NULL);
+	rpi.videosink,
+	rpi.hlssink,
+	rpi.rtmpsink,
+	NULL);
 
 gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.parser, rpi.tee, NULL);
 
-gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
+if (record) {
+	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
+}
 
-gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
+if (stream) {
+	gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
+}
+
+if (hls) {
+	g_object_set(rpi.tee_queue_3, "min-threshold-buffers", 5, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_3, rpi.hlssink, NULL);
+}
+
+if (rtmp) {
+	g_object_set(rpi.tee_queue_4, "min-threshold-buffers", 5, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_4, rpi.rtmpsink, NULL);
+}
 
 // Setup
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
@@ -484,7 +533,14 @@ static GOptionEntry entries[] =
   { "bitrate", 'b', 0, G_OPTION_ARG_INT, &rpi.bitrate, "Video bitrate", "bitrate" },
 
   { "record", 0, 0, G_OPTION_ARG_NONE, &record, "Record localy", NULL },
+
   { "stream", 0, 0, G_OPTION_ARG_NONE, &stream, "Stream", NULL },
+  { "strhost", 0, 0, G_OPTION_ARG_STRING, &rpi.udphost, "UDP Sink host", NULL },
+  { "strport", 0, 0, G_OPTION_ARG_INT, &rpi.udpport, "UDP Sink host", NULL },
+
+  { "hls", 0, 0, G_OPTION_ARG_NONE, &hls, "Stream to HLS", NULL },
+  { "rtmp", 0, 0, G_OPTION_ARG_NONE, &rtmp, "Stream to RTMP", NULL },
+
   { NULL }
 };
 
@@ -503,6 +559,9 @@ rpi.width=1920;
 rpi.height=1080;
 rpi.fps=25;
 rpi.bitrate=8000000;
+
+rpi.udphost="localhost";
+rpi.udpport=5000;
 
 ptz.zoom=1.0;
 ptz.x=0.0;
