@@ -32,6 +32,7 @@ struct _RpiImagePipe {
 	GstElement *hlssink;
 
 	GstElement *tee_queue_4;
+	GstElement *flvmux;
 	GstElement *rtmpsink;
 
 	gint width;
@@ -144,7 +145,7 @@ rpi.metadata=gst_element_factory_make("matroskamux", "mux");
 
 rpi.progress=gst_element_factory_make("progressreport", "progress");
 
-// Tee
+// Tee + queues
 rpi.tee=gst_element_factory_make("tee", "tee");
 rpi.tee_queue_1=gst_element_factory_make("queue", "queue1");
 rpi.tee_queue_2=gst_element_factory_make("queue", "queue2");
@@ -156,6 +157,7 @@ if (record) {
 	rpi.filesink=gst_element_factory_make("filesink", "filesink");
 	g_object_set(rpi.filesink, "location", "video.mkv", NULL);
 } else {
+// We need some sink
 	rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
 }
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
@@ -163,53 +165,53 @@ if (record) {
 //rtph264pay pt=96 config-interval=1 ! udpsink host=192.168.1.149 port=5000
 //rpi.videosink=gst_element_factory_make("fakesink", "tcpsink");
 
-g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
-g_object_set(rpi.tee_queue_3, "leaky", 2, NULL);
+//g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
+//g_object_set(rpi.tee_queue_3, "leaky", 2, NULL);
 
-rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
-g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
-
-// UDPsink to host
-if (stream) {
-	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
-	g_object_set(rpi.videosink, "host", rpi.udphost, "port", rpi.udpport, NULL);
-} else {
-	rpi.videosink=gst_element_factory_make("fakesink", "faksestreamsink");
-}
-
-// HLS
-if (hls && h264) {
-	g_print ("HLS to: %s\n", hls);
-	rpi.hlssink=gst_element_factory_make("hlssink", "hlsink");
-	g_object_set(rpi.hlssink, "location", hls, "max-files", 20, "target-duration", 60, NULL);
-} else {
-	rpi.hlssink=gst_element_factory_make("fakesink", "fakehlssink");
-}
-
-if (rtmp && h264) {
-	g_print ("RTMP to: %s\n", rtmp);
-	rpi.rtmpsink=gst_element_factory_make("rtmpssink", "rtmpsink");
-	g_object_set(rpi.hlssink, "location", rtmp, NULL);
-} else {
-	rpi.rtmpsink=gst_element_factory_make("fakesink", "fakertmpsink");
-}
-
-gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
+gst_bin_add_many(GST_BIN(rpi.pipe),
+	rpi.src,
+	rpi.queue,
 	rpi.capsfilter,
-	rpi.tee, rpi.parser, rpi.metadata,
+	rpi.tee,
+	rpi.parser,
+	rpi.metadata,
+	rpi.filesink,
+	rpi.progress,
 	rpi.tee_queue_1,
 	rpi.tee_queue_2,
 	rpi.tee_queue_3,
 	rpi.tee_queue_4,
-	rpi.filesink,
-	rpi.progress,
-	rpi.rtp_pay,
-	rpi.videosink,
-	rpi.hlssink,
-	rpi.rtmpsink,
 	NULL);
 
-gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.parser, rpi.tee, NULL);
+// UDPsink to host
+if (stream) {
+	rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
+	g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
+
+	g_print("UDP rtp to: %s:%d\n", rpi.udphost, rpi.udpport);
+	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
+	g_object_set(rpi.videosink, "host", rpi.udphost, "port", rpi.udpport, NULL);
+
+	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.rtp_pay, rpi.videosink, NULL);
+}
+
+// HLS
+if (hls && h264) {
+	g_print("HLS to: %s\n", hls);
+	rpi.hlssink=gst_element_factory_make("hlssink", "hlssink");
+	g_object_set(rpi.hlssink, "location", hls, "max-files", 20, "target-duration", 60, NULL);
+	gst_bin_add(GST_BIN(rpi.pipe), rpi.hlssink);
+}
+
+if (rtmp && h264) {
+	g_print("RTMP to: %s\n", rtmp);
+	rpi.flvmux=gst_element_factory_make("flvmux", "flvmux");
+	rpi.rtmpsink=gst_element_factory_make("rtmpsink", "rtmpsink");
+	g_object_set(rpi.rtmpsink, "location", rtmp, NULL);
+	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.flvmux, rpi.rtmpsink, NULL);
+}
+
+gst_element_link_many(rpi.src, rpi.capsfilter, rpi.queue, rpi.parser, rpi.progress, rpi.tee, NULL);
 
 if (record) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
@@ -222,14 +224,14 @@ if (stream) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
 }
 
-if (hls) {
+if (hls && h264) {
 	g_object_set(rpi.tee_queue_3, "min-threshold-buffers", 5, NULL);
 	gst_element_link_many(rpi.tee, rpi.tee_queue_3, rpi.hlssink, NULL);
 }
 
-if (rtmp) {
+if (rtmp && h264) {
 	g_object_set(rpi.tee_queue_4, "min-threshold-buffers", 5, NULL);
-	gst_element_link_many(rpi.tee, rpi.tee_queue_4, rpi.rtmpsink, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_4, rpi.flvmux, rpi.rtmpsink, NULL);
 }
 
 // Setup
@@ -260,8 +262,13 @@ switch (GST_MESSAGE_TYPE (msg)) {
 	case GST_MESSAGE_INFO:
 		g_print ("Info\n");
 	break;
-	case GST_MESSAGE_STREAM_STATUS:
-		g_print ("Stream\n");
+	case GST_MESSAGE_STREAM_STATUS: {
+		GstStreamStatusType type;
+		GstElement *owner;
+
+		gst_message_parse_stream_status(msg, &type, &owner);
+		g_print ("Stream status %d\n", type);
+	}
 	break;
 	case GST_MESSAGE_STREAM_START:
 		g_print ("Stream started\n");
@@ -272,7 +279,7 @@ switch (GST_MESSAGE_TYPE (msg)) {
 		gchar  *debug;
 		GError *error;
 
-		gst_message_parse_error (msg, &error, &debug);
+		gst_message_parse_error(msg, &error, &debug);
 		g_free (debug);
 
 		g_printerr("Error: %s\n", error->message);
@@ -297,6 +304,8 @@ g_print ("SIGINT\n");
 RpiImagePipe *g=(RpiImagePipe *)data;
 
 gst_element_send_event(g->pipe, gst_event_new_eos());
+
+g_print ("EOS Sent\n");
 
 return FALSE;
 }
@@ -447,6 +456,8 @@ if (strstr(msg->topic, "/drc")!=NULL) {
 } else if (strstr(msg->topic, "/zoom")!=NULL) {
   int tmp=atoi(data);
   set_zoom(tmp);
+} else if (strstr(msg->topic, "/stop")!=NULL) {
+  gst_element_send_event(rpi.src, gst_event_new_eos());
 } else {
    g_print("Unhandled topic\n");
 }
@@ -615,6 +626,8 @@ mosquitto_subscribe(mq.tt, NULL, "/video/annotation-text", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
+
+mosquitto_subscribe(mq.tt, NULL, "/video/control/stop", 0);
 
 rpiimagepipe(true);
 
