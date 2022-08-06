@@ -80,8 +80,8 @@ gint iso=100;
 
 gboolean record=false;
 gboolean stream=false;
-gboolean hls=false;
-gboolean rtmp=false;
+gchar *hls;
+gchar *rtmp;
 
 int keepalive = 120;
 bool clean_session = true;
@@ -178,16 +178,18 @@ if (stream) {
 }
 
 // HLS
-if (hls) {
+if (hls && h264) {
+	g_print ("HLS to: %s\n", hls);
 	rpi.hlssink=gst_element_factory_make("hlssink", "hlsink");
-	g_object_set(rpi.hlssink, "location", "/var/spool/video", "max-files", 20, "target-duration", 60, NULL);
+	g_object_set(rpi.hlssink, "location", hls, "max-files", 20, "target-duration", 60, NULL);
 } else {
 	rpi.hlssink=gst_element_factory_make("fakesink", "fakehlssink");
 }
 
-if (rtmp) {
+if (rtmp && h264) {
+	g_print ("RTMP to: %s\n", rtmp);
 	rpi.rtmpsink=gst_element_factory_make("rtmpssink", "rtmpsink");
-	g_object_set(rpi.hlssink, "location", "rtmp://192.168.1.121/video", NULL);
+	g_object_set(rpi.hlssink, "location", rtmp, NULL);
 } else {
 	rpi.rtmpsink=gst_element_factory_make("fakesink", "fakertmpsink");
 }
@@ -197,6 +199,8 @@ gst_bin_add_many(GST_BIN(rpi.pipe), rpi.src, rpi.queue,
 	rpi.tee, rpi.parser, rpi.metadata,
 	rpi.tee_queue_1,
 	rpi.tee_queue_2,
+	rpi.tee_queue_3,
+	rpi.tee_queue_4,
 	rpi.filesink,
 	rpi.progress,
 	rpi.rtp_pay,
@@ -209,6 +213,9 @@ gst_element_link_many(rpi.src, rpi.queue, rpi.capsfilter, rpi.parser, rpi.tee, N
 
 if (record) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
+} else {
+	// Fakesink
+	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.filesink, NULL);
 }
 
 if (stream) {
@@ -542,8 +549,8 @@ static GOptionEntry entries[] =
   { "strhost", 0, 0, G_OPTION_ARG_STRING, &rpi.udphost, "UDP Sink host", NULL },
   { "strport", 0, 0, G_OPTION_ARG_INT, &rpi.udpport, "UDP Sink host", NULL },
 
-  { "hls", 0, 0, G_OPTION_ARG_NONE, &hls, "Stream to HLS", NULL },
-  { "rtmp", 0, 0, G_OPTION_ARG_NONE, &rtmp, "Stream to RTMP", NULL },
+  { "hls", 0, 0, G_OPTION_ARG_STRING, &hls, "Stream HLS to given path", NULL },
+  { "rtmp", 0, 0, G_OPTION_ARG_STRING, &rtmp, "Stream to RTMP to given url", NULL },
 
   { NULL }
 };
