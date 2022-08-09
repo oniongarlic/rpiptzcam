@@ -113,6 +113,10 @@ rpi.pipe=gst_pipeline_new("pipeline");
 
 // Source
 rpi.src=gst_element_factory_make("rpicamsrc", "video");
+if (!rpi.src) {
+	g_print("Failed to create rpicamsrc, fallback to v4l interface.\n");
+	rpi.src=gst_element_factory_make("v4l2src", "video");
+}
 rpi.queue=gst_element_factory_make("queue", "queue");
 
 // Filtering/Caps
