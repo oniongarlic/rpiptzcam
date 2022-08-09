@@ -25,6 +25,8 @@ struct _RpiImagePipe {
 	GstElement *progress;
 	GstElement *rtp_pay;
 
+	GstElement *decodebin;
+
 	GstElement *tee_queue_2;
 	GstElement *videosink;
 
@@ -81,6 +83,9 @@ gint iso=100;
 
 gboolean record=false;
 gboolean stream=false;
+gboolean use_h264=false;
+gboolean use_mjpg=false;
+gboolean use_xv=false;
 gchar *hls;
 gchar *rtmp;
 
@@ -103,10 +108,8 @@ set_tag(rpi.metadata, &rpi);
 return TRUE;
 }
 
-// jpegparse ! matroskamux ! queue ! tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
-
-static void
-rpiimagepipe(bool h264)
+static gboolean
+rpiimagepipe(bool h264, bool mjpg)
 {
 char caps[80];
 rpi.pipe=gst_pipeline_new("pipeline");
@@ -116,6 +119,12 @@ rpi.src=gst_element_factory_make("rpicamsrc", "video");
 if (!rpi.src) {
 	g_print("Failed to create rpicamsrc, fallback to v4l interface.\n");
 	rpi.src=gst_element_factory_make("v4l2src", "video");
+} else {
+	g_object_set(rpi.src, "sensor-mode", 2,
+		"annotation-mode", 12,
+		"exposure-mode", 2,
+		"keyframe-interval", 5,
+		"bitrate", rpi.bitrate, NULL);
 }
 rpi.queue=gst_element_factory_make("queue", "queue");
 
@@ -123,7 +132,8 @@ rpi.queue=gst_element_factory_make("queue", "queue");
 rpi.capsfilter=gst_element_factory_make("capsfilter", "capsfilter");
 
 // Encoding
-if (h264) {
+if (h264 && !mjpg) {
+	g_print("Capturing h264, %d x %d %d fps.\n", rpi.width,rpi.height, rpi.fps);
 	snprintf(caps, sizeof(caps), "video/x-h264,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
 
 	GstCaps *cr=gst_caps_from_string(caps);
@@ -132,10 +142,8 @@ if (h264) {
 
 	rpi.parser=gst_element_factory_make("h264parse", "h264");
 	g_object_set(rpi.parser, "config-interval", 1, NULL);
-} else {
-	// Framerate, 1 FPS
-	// GstCaps *cr=gst_caps_from_string ("image/jpeg,width=2592,height=1944,framerate=5/1");
-
+} else if (mjpg && !h264) {
+	g_print("Capturing mjpg, %d x %d %d fps.\n", rpi.width,rpi.height, rpi.fps);
 	snprintf(caps, sizeof(caps), "image/jpeg,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
 
 	GstCaps *cr=gst_caps_from_string(caps);
@@ -143,6 +151,9 @@ if (h264) {
 	gst_caps_unref(cr);
 
 	rpi.parser=gst_element_factory_make("jpegparse", "jpeg");
+} else {
+	g_print("No format set\n");
+	return false;
 }
 
 rpi.metadata=gst_element_factory_make("matroskamux", "mux");
@@ -158,11 +169,18 @@ rpi.tee_queue_4=gst_element_factory_make("queue", "queue4");
 
 // Record to local file
 if (record) {
+	g_print("Recording to local file.\n");
+
 	rpi.filesink=gst_element_factory_make("filesink", "filesink");
 	g_object_set(rpi.filesink, "location", "video.mkv", NULL);
 } else {
-// We need some sink
-	rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
+	g_print("Faking it\n");
+	// We need some sink, on a rpi we use preview for the output so a fakesink is enough
+	if (!use_xv) {
+		rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
+	} else {
+		rpi.filesink=gst_element_factory_make("xvimagesink", "fakefilesink");
+	}
 }
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
 //rpi.videosink=gst_element_factory_make("tcpserversink", "tcpsink");
@@ -188,11 +206,22 @@ gst_bin_add_many(GST_BIN(rpi.pipe),
 	NULL);
 
 // UDPsink to host
-if (stream) {
+if (stream && h264) {
+	g_print("UDP h264 rtp to: %s:%d\n", rpi.udphost, rpi.udpport);
+
 	rpi.rtp_pay=gst_element_factory_make("rtph264pay", "rtpay");
 	g_object_set(rpi.rtp_pay, "pt", 96, "config-interval", 1, NULL);
 
-	g_print("UDP rtp to: %s:%d\n", rpi.udphost, rpi.udpport);
+	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
+	g_object_set(rpi.videosink, "host", rpi.udphost, "port", rpi.udpport, NULL);
+
+	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.rtp_pay, rpi.videosink, NULL);
+} else if (stream && mjpg) {
+	g_print("UDP mjpg rtp to: %s:%d\n", rpi.udphost, rpi.udpport);
+
+	rpi.rtp_pay=gst_element_factory_make("rtpjpegpay", "rtpay");
+	g_object_set(rpi.rtp_pay, "pt", 26, "config-interval", 1, NULL);
+
 	rpi.videosink=gst_element_factory_make("udpsink", "streamsink");
 	g_object_set(rpi.videosink, "host", rpi.udphost, "port", rpi.udpport, NULL);
 
@@ -219,9 +248,12 @@ gst_element_link_many(rpi.src, rpi.capsfilter, rpi.queue, rpi.parser, rpi.progre
 
 if (record) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
-} else {
-	// Fakesink
+} else if (!use_xv) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.filesink, NULL);
+} else if (use_xv) {
+	rpi.decodebin=gst_element_factory_make("decodebin", "decodebin");
+	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.decodebin, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.decodebin, rpi.filesink, NULL);
 }
 
 if (stream) {
@@ -241,8 +273,9 @@ if (rtmp && h264) {
 // Setup
 //g_object_set(rpi.src, "num-buffers", 25, NULL);
 // annotation-mode=12 sensor-mode=2 exposure-mode=2 drc=3
-g_object_set(rpi.src, "sensor-mode", 2, "annotation-mode", 12, "exposure-mode", 2, "keyframe-interval", 5, "bitrate", rpi.bitrate, NULL);
 //g_object_set(rpi.videosink, "recover-policy", 1, "sync-method", 3, NULL);
+
+return true;
 }
 
 static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data)
@@ -560,6 +593,11 @@ static GOptionEntry entries[] =
 
   { "record", 0, 0, G_OPTION_ARG_NONE, &record, "Record localy", NULL },
 
+  { "xvsink", 0, 0, G_OPTION_ARG_NONE, &use_xv, "Use xvimagesink instead of faksesink", NULL },
+
+  { "h264", 0, 0, G_OPTION_ARG_NONE, &use_h264, "Use h264, default", NULL },
+  { "mjpeg", 0, 0, G_OPTION_ARG_NONE, &use_mjpg, "Use MJPG", NULL },
+
   { "stream", 0, 0, G_OPTION_ARG_NONE, &stream, "Stream", NULL },
   { "strhost", 0, 0, G_OPTION_ARG_STRING, &rpi.udphost, "UDP Sink host", NULL },
   { "strport", 0, 0, G_OPTION_ARG_INT, &rpi.udpport, "UDP Sink host", NULL },
@@ -608,6 +646,10 @@ if (!g_option_context_parse (context, &argc, &argv, &error)) {
 	exit (1);
 }
 
+if (rpiimagepipe(use_h264, use_mjpg)==false) {
+ return 1;
+}
+
 g_print("MQTT: %s %d %s\n", mq.host, mq.port, mq.clientid);
 
 mosquitto_lib_init();
@@ -632,8 +674,6 @@ mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
 
 mosquitto_subscribe(mq.tt, NULL, "/video/control/stop", 0);
-
-rpiimagepipe(true);
 
 bus = gst_pipeline_get_bus(GST_PIPELINE(rpi.pipe));
 bus_watch_id = gst_bus_add_watch(bus, bus_call, loop);
