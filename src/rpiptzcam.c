@@ -165,8 +165,9 @@ if (record) {
 //rtph264pay pt=96 config-interval=1 ! udpsink host=192.168.1.149 port=5000
 //rpi.videosink=gst_element_factory_make("fakesink", "tcpsink");
 
-//g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
-//g_object_set(rpi.tee_queue_3, "leaky", 2, NULL);
+g_object_set(rpi.tee_queue_2, "leaky", 2, NULL);
+g_object_set(rpi.tee_queue_3, "leaky", 2, NULL);
+g_object_set(rpi.tee_queue_4, "leaky", 2, NULL);
 
 gst_bin_add_many(GST_BIN(rpi.pipe),
 	rpi.src,
@@ -205,9 +206,13 @@ if (hls && h264) {
 
 if (rtmp && h264) {
 	g_print("RTMP to: %s\n", rtmp);
+
 	rpi.flvmux=gst_element_factory_make("flvmux", "flvmux");
+	g_object_set(rpi.flvmux, "streamable", true, NULL);
+
 	rpi.rtmpsink=gst_element_factory_make("rtmpsink", "rtmpsink");
 	g_object_set(rpi.rtmpsink, "location", rtmp, NULL);
+
 	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.flvmux, rpi.rtmpsink, NULL);
 }
 
@@ -579,7 +584,7 @@ mq.clientid="ta-rpivideo";
 
 rpi.width=1920;
 rpi.height=1080;
-rpi.fps=25;
+rpi.fps=30;
 rpi.bitrate=8000000;
 
 rpi.udphost="localhost";
