@@ -15,7 +15,10 @@ struct _RpiImagePipe {
 	GstElement *src;
 	GstElement *queue;
 	GstElement *capsfilter;
-	GstElement *imageenc;
+
+	GstElement *encoder;
+	GstElement *capsencoder;
+
 	GstElement *parser;
 	GstElement *metadata;
 	GstElement *tee;
@@ -111,34 +114,42 @@ return TRUE;
 static gboolean
 rpiimagepipe(bool h264, bool mjpg)
 {
-char caps[80];
+char caps[256];
 rpi.pipe=gst_pipeline_new("pipeline");
 
 // Source
-rpi.src=gst_element_factory_make("rpicamsrc", "video");
+rpi.src=gst_element_factory_make("libcamerasrc", "video");
 if (!rpi.src) {
-	g_print("Failed to create rpicamsrc, fallback to v4l interface.\n");
+	g_print("Failed to create libcamerasrc, fallback to v4l interface.\n");
 	rpi.src=gst_element_factory_make("v4l2src", "video");
 } else {
-	g_object_set(rpi.src, "sensor-mode", 2,
-		"annotation-mode", 12,
-		"exposure-mode", 2,
-		"keyframe-interval", 5,
-		"bitrate", rpi.bitrate, NULL);
+	g_object_set(rpi.src, "af-mode", 2, NULL);
 }
 rpi.queue=gst_element_factory_make("queue", "queue");
 
 // Filtering/Caps
 rpi.capsfilter=gst_element_factory_make("capsfilter", "capsfilter");
 
+int bitrate=7500000;
+
 // Encoding
 if (h264 && !mjpg) {
 	g_print("Capturing h264, %d x %d %d fps.\n", rpi.width,rpi.height, rpi.fps);
-	snprintf(caps, sizeof(caps), "video/x-h264,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
+	snprintf(caps, sizeof(caps), "video/raw,width=%d,height=%d,framerate=%d/1,format=NV21,interlace-mode=progressive,colorimetry=bt709", rpi.width,rpi.height, rpi.fps);
 
 	GstCaps *cr=gst_caps_from_string(caps);
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
+
+	rpi.encoder=gst_element_factory_make("v4l2h264enc", "encoder");
+	g_object_set(rpi.encoder, "extra-controls", "controls,video_bitrate_mode=0,sequence_header_mode=1,repeat_sequence_header=1,h264_minimum_qp_value=22,h264_maximum_qp_value=32,h264_i_frame_period=30,h264_profile=4,h264_level=15;", NULL);
+
+	rpi.capsencoder=gst_element_factory_make("capsfilter", "capsencoder");
+	snprintf(caps, sizeof(caps), "video/x-h264,profile=high,bitrate=%d,level=(string)4", bitrate);
+
+	GstCaps *cre=gst_caps_from_string(caps);
+	g_object_set(rpi.capsencoder, "caps", cre, NULL);
+	gst_caps_unref(cre);
 
 	rpi.parser=gst_element_factory_make("h264parse", "h264");
 	g_object_set(rpi.parser, "config-interval", 1, NULL);
@@ -177,7 +188,7 @@ if (record) {
 	g_print("Faking it\n");
 	// We need some sink, on a rpi we use preview for the output so a fakesink is enough
 	if (!use_xv) {
-		rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
+		rpi.filesink=gst_element_factory_make("kmsink", "fakefilesink");
 	} else {
 		rpi.filesink=gst_element_factory_make("xvimagesink", "fakefilesink");
 	}
