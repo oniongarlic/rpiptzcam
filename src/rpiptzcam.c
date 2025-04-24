@@ -396,37 +396,48 @@ fprintf(stderr, "[MQTT-%d] %s\n", level, str);
 
 void set_zoom(int zoom)
 {
-float s=(float)zoom/100.0;
+float s=(float)(CLAMP(zoom, 1, 1000))/1000.0; // 0-1000
 float hw=1,xy=0;
 float px,py=0;
+float sw=4608, sh=2592;
+int ix,iy,ih,iw;
 
-if (zoom<0)
-  return;
-
-if (zoom>99) {
-  hw=1.0/s;
-  xy=0.5-(0.5/s);
-
-  fprintf(stderr, "%d S: %f XY: %f HW: %f\n", zoom, s, xy, hw);
+if (zoom<0) {
+ ptz.zoom=1;
+ ptz.rx=0;
+ ptz.ry=0;
+ ptz.w=sw;
+ ptz.h=sh;
 } else {
-  s=(float)zoom;
+ ptz.zoom=s;
+ ptz.w=sw*s;
+ ptz.h=sh*s;
+ ptz.rx=(sw-ptz.w)/2.0;
+ ptz.ry=(sh-ptz.h)/2.0;
 }
+
+fprintf(stderr, "Zoom: %d S: %f XY: %f SensXY-WH %f,%f-%f,%f\n", zoom, s, xy, ptz.rx, ptz.ry, ptz.w, ptz.h);
+
+ix=(int)ptz.rx;
+iy=(int)ptz.ry;
+iw=(int)ptz.w;
+ih=(int)ptz.h;
 
 GValue x = G_VALUE_INIT;
 g_value_init(&x, G_TYPE_INT);
-g_value_set_int(&x, 0);
+g_value_set_int(&x, ix);
 
 GValue y = G_VALUE_INIT;
 g_value_init(&y, G_TYPE_INT);
-g_value_set_int(&y, 0);
+g_value_set_int(&y, iy);
 
 GValue w = G_VALUE_INIT;
 g_value_init(&w, G_TYPE_INT);
-g_value_set_int(&w, 1920);
+g_value_set_int(&w, iw);
 
 GValue h = G_VALUE_INIT;
 g_value_init(&h, G_TYPE_INT);
-g_value_set_int(&h, 1080);
+g_value_set_int(&h, ih);
 
 // Create the GstValueArray
 GValue roi = G_VALUE_INIT;
@@ -438,14 +449,6 @@ gst_value_array_append_value(&roi, &h);
 
 g_object_set_property (G_OBJECT(rpi.src), "scaler-crop", &roi);
 g_value_unset(&roi);
-return;
-
-ptz.zoom=s;
-ptz.rx=xy;
-ptz.ry=xy;
-ptz.h=hw;
-ptz.w=hw;
-
 }
 
 void set_panning(int x, int y)
@@ -523,11 +526,36 @@ if (strstr(msg->topic, "/drc")!=NULL) {
 } else if (strstr(msg->topic, "/zoom")!=NULL) {
   int tmp=atoi(data);
   set_zoom(tmp);
+} else if (strstr(msg->topic, "/focus/mode")!=NULL) {
+  int tmp=atoi(data);
+  g_object_set(rpi.src, "af-mode", CLAMP(tmp, 0, 2), NULL);
+} else if (strstr(msg->topic, "/focus/range")!=NULL) {
+  int tmp=atoi(data);
+  g_object_set(rpi.src, "af-range", CLAMP(tmp, 0, 2), NULL);
+} else if (strstr(msg->topic, "/focus/speed")!=NULL) {
+  int tmp=atoi(data);
+  g_object_set(rpi.src, "af-speed", CLAMP(tmp, 0, 1), NULL);
 } else if (strstr(msg->topic, "/stop")!=NULL) {
   gst_element_send_event(rpi.src, gst_event_new_eos());
 } else {
    g_print("Unhandled topic\n");
 }
+}
+
+static gboolean pipeline_update(gpointer user_data)
+{
+float focus;
+int tmp;
+
+g_object_get(rpi.src, "lens-position", &focus, NULL);
+
+// g_print("Focus: %f\n", focus);
+
+tmp=(int)(focus*10000.0);
+
+mqtt_publish_info_topic_int(mq.tt, "video", "focus/position", tmp);
+
+return TRUE;
 }
 
 gint connect_mqtt()
@@ -547,7 +575,7 @@ return 0;
 
 gboolean mqtt_loop_sleep(gpointer data)
 {
-int i=0,r;
+int r;
 r=mosquitto_loop(mq.tt, 1, 1);
 if (r!=MOSQ_ERR_SUCCESS)
 	return TRUE;
@@ -703,6 +731,10 @@ mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
 
+mosquitto_subscribe(mq.tt, NULL, "/video/focus/mode", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/focus/range", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/focus/speed", 0);
+
 mosquitto_subscribe(mq.tt, NULL, "/video/control/stop", 0);
 
 bus = gst_pipeline_get_bus(GST_PIPELINE(rpi.pipe));
@@ -730,6 +762,7 @@ g_source_attach(mq.src_in, NULL);
 //g_source_attach(mq.src_out, NULL);
 
 g_timeout_add(100, _mqtt_socket_misc, loop);
+g_timeout_add(1000, pipeline_update, loop);
 
 g_main_loop_run(loop);
 
