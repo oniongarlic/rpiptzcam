@@ -89,6 +89,7 @@ gboolean stream=false;
 gboolean use_h264=false;
 gboolean use_mjpg=false;
 gboolean use_xv=false;
+gboolean use_kms=false;
 gchar *hls;
 gchar *rtmp;
 
@@ -135,14 +136,14 @@ int bitrate=7500000;
 // Encoding
 if (h264 && !mjpg) {
 	g_print("Capturing h264, %d x %d %d fps.\n", rpi.width,rpi.height, rpi.fps);
-	snprintf(caps, sizeof(caps), "video/raw,width=%d,height=%d,framerate=%d/1,format=NV21,interlace-mode=progressive,colorimetry=bt709", rpi.width,rpi.height, rpi.fps);
+	snprintf(caps, sizeof(caps), "video/x-raw,width=%d,height=%d,framerate=%d/1,format=NV21,interlace-mode=progressive,colorimetry=bt709", rpi.width, rpi.height, rpi.fps);
 
 	GstCaps *cr=gst_caps_from_string(caps);
 	g_object_set(rpi.capsfilter, "caps", cr, NULL);
 	gst_caps_unref(cr);
 
 	rpi.encoder=gst_element_factory_make("v4l2h264enc", "encoder");
-	g_object_set(rpi.encoder, "extra-controls", "controls,video_bitrate_mode=0,sequence_header_mode=1,repeat_sequence_header=1,h264_minimum_qp_value=22,h264_maximum_qp_value=32,h264_i_frame_period=30,h264_profile=4,h264_level=15;", NULL);
+//	g_object_set(rpi.encoder, "extra-controls", "controls,video_bitrate_mode=0,sequence_header_mode=1,repeat_sequence_header=1,h264_minimum_qp_value=22,h264_maximum_qp_value=32,h264_i_frame_period=30,h264_profile=4,h264_level=15;", NULL);
 
 	rpi.capsencoder=gst_element_factory_make("capsfilter", "capsencoder");
 	snprintf(caps, sizeof(caps), "video/x-h264,profile=high,bitrate=%d,level=(string)4", bitrate);
@@ -153,6 +154,8 @@ if (h264 && !mjpg) {
 
 	rpi.parser=gst_element_factory_make("h264parse", "h264");
 	g_object_set(rpi.parser, "config-interval", 1, NULL);
+
+	g_print("Capture configured\n");
 } else if (mjpg && !h264) {
 	g_print("Capturing mjpg, %d x %d %d fps.\n", rpi.width,rpi.height, rpi.fps);
 	snprintf(caps, sizeof(caps), "image/jpeg,width=%d,height=%d,framerate=%d/1", rpi.width,rpi.height, rpi.fps);
@@ -162,8 +165,9 @@ if (h264 && !mjpg) {
 	gst_caps_unref(cr);
 
 	rpi.parser=gst_element_factory_make("jpegparse", "jpeg");
+	g_print("Capture configured\n");
 } else {
-	g_print("No format set\n");
+	g_print("No format set, (--h264 or --mjpeg)\n");
 	return false;
 }
 
@@ -185,12 +189,15 @@ if (record) {
 	rpi.filesink=gst_element_factory_make("filesink", "filesink");
 	g_object_set(rpi.filesink, "location", "video.mkv", NULL);
 } else {
-	g_print("Faking it\n");
-	// We need some sink, on a rpi we use preview for the output so a fakesink is enough
-	if (!use_xv) {
+	if (!use_xv && !use_kms) {
+		rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
+	} else if (use_kms) {
 		rpi.filesink=gst_element_factory_make("kmsink", "fakefilesink");
-	} else {
+	} else if (use_xv) {
 		rpi.filesink=gst_element_factory_make("xvimagesink", "fakefilesink");
+	} else {
+		g_print("Huh?\n");
+		rpi.filesink=gst_element_factory_make("fakesink", "fakefilesink");
 	}
 }
 // tcpserversink host=192.168.1.89 recover-policy=keyframe sync-method=latest-keyframe
@@ -204,6 +211,8 @@ g_object_set(rpi.tee_queue_4, "leaky", 2, NULL);
 
 gst_bin_add_many(GST_BIN(rpi.pipe),
 	rpi.src,
+	rpi.encoder,
+	rpi.capsencoder,
 	rpi.queue,
 	rpi.capsfilter,
 	rpi.tee,
@@ -245,6 +254,10 @@ if (hls && h264) {
 	g_print("HLS to: %s\n", hls);
 	rpi.hlssink=gst_element_factory_make("hlssink", "hlssink");
 	g_object_set(rpi.hlssink, "location", hls, "max-files", 20, "target-duration", 60, NULL);
+
+	g_object_set(rpi.tee_queue_3, "min-threshold-buffers", 5, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_3, rpi.hlssink, NULL);
+
 	gst_bin_add(GST_BIN(rpi.pipe), rpi.hlssink);
 }
 
@@ -257,10 +270,17 @@ if (rtmp && h264) {
 	rpi.rtmpsink=gst_element_factory_make("rtmpsink", "rtmpsink");
 	g_object_set(rpi.rtmpsink, "location", rtmp, NULL);
 
+	g_object_set(rpi.tee_queue_4, "min-threshold-buffers", 5, NULL);
+	gst_element_link_many(rpi.tee, rpi.tee_queue_4, rpi.flvmux, rpi.rtmpsink, NULL);
+
 	gst_bin_add_many(GST_BIN(rpi.pipe), rpi.flvmux, rpi.rtmpsink, NULL);
 }
 
-gst_element_link_many(rpi.src, rpi.capsfilter, rpi.queue, rpi.parser, rpi.progress, rpi.tee, NULL);
+if (rpi.encoder) {
+	gst_element_link_many(rpi.src, rpi.capsfilter, rpi.encoder, rpi.capsencoder, rpi.queue, rpi.parser, rpi.progress, rpi.tee, NULL);
+} else {
+	gst_element_link_many(rpi.src, rpi.capsfilter, rpi.queue, rpi.parser, rpi.progress, rpi.tee, NULL);
+}
 
 if (record) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_1, rpi.metadata, rpi.filesink, NULL);
@@ -274,16 +294,6 @@ if (record) {
 
 if (stream) {
 	gst_element_link_many(rpi.tee, rpi.tee_queue_2, rpi.rtp_pay, rpi.videosink, NULL);
-}
-
-if (hls && h264) {
-	g_object_set(rpi.tee_queue_3, "min-threshold-buffers", 5, NULL);
-	gst_element_link_many(rpi.tee, rpi.tee_queue_3, rpi.hlssink, NULL);
-}
-
-if (rtmp && h264) {
-	g_object_set(rpi.tee_queue_4, "min-threshold-buffers", 5, NULL);
-	gst_element_link_many(rpi.tee, rpi.tee_queue_4, rpi.flvmux, rpi.rtmpsink, NULL);
 }
 
 // Setup
@@ -402,35 +412,39 @@ if (zoom>99) {
   s=(float)zoom;
 }
 
-if (zoom>1) {
-  char txt[80];
-  snprintf(txt, sizeof(txt), "Zoom: %f.1", s);
-  g_object_set(rpi.src, "annotation-mode", 1, "annotation-text", txt, NULL);
-} else {
-  g_object_set(rpi.src, "annotation-mode", 12, "annotation-text", "", NULL);
-}
+GValue x = G_VALUE_INIT;
+g_value_init(&x, G_TYPE_INT);
+g_value_set_int(&x, 0);
+
+GValue y = G_VALUE_INIT;
+g_value_init(&y, G_TYPE_INT);
+g_value_set_int(&y, 0);
+
+GValue w = G_VALUE_INIT;
+g_value_init(&w, G_TYPE_INT);
+g_value_set_int(&w, 1920);
+
+GValue h = G_VALUE_INIT;
+g_value_init(&h, G_TYPE_INT);
+g_value_set_int(&h, 1080);
+
+// Create the GstValueArray
+GValue roi = G_VALUE_INIT;
+g_value_init(&roi, GST_TYPE_ARRAY);
+gst_value_array_append_value(&roi, &x);
+gst_value_array_append_value(&roi, &y);
+gst_value_array_append_value(&roi, &w);
+gst_value_array_append_value(&roi, &h);
+
+g_object_set_property (G_OBJECT(rpi.src), "scaler-crop", &roi);
+g_value_unset(&roi);
+return;
 
 ptz.zoom=s;
 ptz.rx=xy;
 ptz.ry=xy;
 ptz.h=hw;
 ptz.w=hw;
-
-switch(zoom) {
-  case 0:
-  case 1:
-    g_object_set(rpi.src, "roi-x", 0.0, NULL);
-    g_object_set(rpi.src, "roi-y", 0.0, NULL);
-    g_object_set(rpi.src, "roi-w", 1.0, NULL);
-    g_object_set(rpi.src, "roi-h", 1.0, NULL);
-  break;
-  default:
-    g_object_set(rpi.src, "roi-x", xy+ptz.x, NULL);
-    g_object_set(rpi.src, "roi-y", xy+ptz.y, NULL);
-    g_object_set(rpi.src, "roi-w", hw, NULL);
-    g_object_set(rpi.src, "roi-h", hw, NULL);
-  break;
-}
 
 }
 
@@ -482,21 +496,21 @@ if (strstr(msg->topic, "/drc")!=NULL) {
   tmp=CLAMP(tmp, 100, 3600);
   g_object_set(rpi.src, "iso", tmp, NULL);
 } else if (strstr(msg->topic, "/brightness")!=NULL) {
-  int tmp=atoi(data);
-  tmp=CLAMP(tmp, -100, 100);
-  g_object_set(rpi.src, "brightness", tmp, NULL);
+  double tmp=atof(data);
+  tmp=CLAMP(tmp, -100.0, 100.0);
+  g_object_set(rpi.src, "brightness", tmp/100.0, NULL);
 } else if (strstr(msg->topic, "/contrast")!=NULL) {
-  int tmp=atoi(data);
-  tmp=CLAMP(tmp, -100, 100);
-  g_object_set(rpi.src, "contrast", tmp, NULL);
+  double tmp=atof(data);
+  tmp=CLAMP(tmp, -100.0, 100.0);
+  g_object_set(rpi.src, "contrast", tmp/100.0, NULL);
 } else if (strstr(msg->topic, "/saturation")!=NULL) {
-  int tmp=atoi(data);
-  tmp=CLAMP(tmp, -100, 100);
-  g_object_set(rpi.src, "saturation", tmp, NULL);
+  double tmp=atof(data);
+  tmp=CLAMP(tmp, -100.0, 100.0);
+  g_object_set(rpi.src, "saturation", tmp/100.0, NULL);
 } else if (strstr(msg->topic, "/sharpness")!=NULL) {
-  int tmp=atoi(data);
-  tmp=CLAMP(tmp, -100, 100);
-  g_object_set(rpi.src, "sharpness", tmp, NULL);
+  double tmp=atof(data);
+  tmp=CLAMP(tmp, -100.0, 100.0);
+  g_object_set(rpi.src, "sharpness", tmp/100.0, NULL);
 } else if (strstr(msg->topic, "/xy")!=NULL) {
   int x,y, r;
 
