@@ -59,6 +59,9 @@ struct _CameraPTZ {
 	float ry;
 	float h;
 	float w;
+	guint zoom_id;
+	guint zoom_to;
+	guint zoom_from;
 };
 
 typedef struct _VideoMQTT VideoMQTT;
@@ -470,6 +473,23 @@ g_object_set(rpi.src, "roi-x", px, NULL);
 g_object_set(rpi.src, "roi-y", py, NULL);
 }
 
+static gboolean zoom_auto(gpointer user_data)
+{
+if (ptz.zoom_from==ptz.zoom_to) {
+	ptz.zoom_id=0;
+  	g_print("AutoZoom: Done\n");
+	return FALSE;
+}
+if (ptz.zoom_from>ptz.zoom_to)
+	ptz.zoom_from--;
+else if (ptz.zoom_from<ptz.zoom_to)
+	ptz.zoom_from++;
+
+set_zoom(ptz.zoom_from);
+
+return TRUE;
+}
+
 void on_message(struct mosquitto *m, void *userdata, const struct mosquitto_message *msg)
 {
 char data[256];
@@ -522,6 +542,21 @@ if (strstr(msg->topic, "/drc")!=NULL) {
    set_panning(x,y);
   } else {
    g_print("Invalid xy format\n");
+  }
+} else if (strstr(msg->topic, "/zoom/auto")!=NULL) {
+  int tmp=atoi(data);
+  if (tmp==0) {
+	g_source_remove(ptz.zoom_id);
+	ptz.zoom_id=0;
+	ptz.zoom_to=0;
+	ptz.zoom_from=ptz.zoom*1000.0;
+  } else {
+	ptz.zoom_from=ptz.zoom*1000.0;
+	ptz.zoom_to=CLAMP(tmp, 0, 1000);
+	if (ptz.zoom_id>0)
+		g_source_remove(ptz.zoom_id);
+	ptz.zoom_id=g_timeout_add(33, zoom_auto, NULL);
+  	g_print("AutoZoom: %d -> %d\n", ptz.zoom_from, ptz.zoom_to);
   }
 } else if (strstr(msg->topic, "/zoom")!=NULL) {
   int tmp=atoi(data);
@@ -693,6 +728,10 @@ ptz.ry=0.0;
 ptz.h=1.0;
 ptz.w=1.0;
 
+ptz.zoom_id=0;
+ptz.zoom_from=1000;
+ptz.zoom_to=1000;
+
 gst_init(&argc, &argv);
 
 context = g_option_context_new ("- test tree model performance");
@@ -729,6 +768,7 @@ mosquitto_subscribe(mq.tt, NULL, "/video/annotation-mode", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/annotation-text", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/roi", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/zoom", 0);
+mosquitto_subscribe(mq.tt, NULL, "/video/zoom/auto", 0);
 mosquitto_subscribe(mq.tt, NULL, "/video/xy", 0);
 
 mosquitto_subscribe(mq.tt, NULL, "/video/focus/mode", 0);
